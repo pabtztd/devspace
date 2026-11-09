@@ -890,6 +890,7 @@ test("HTTP cached workspaceId arguments preserve canonical schemas and validatio
   assert.equal(read?.inputSchema.properties?.workspaceId, undefined);
 });
 
+/** A release file keeps command lifetime independent of host scheduling during HTTP validation. */
 test("HTTP cached process arguments preserve working directory, yield and output limits", async (t) => {
   const { root, localBaseUrl, accessToken } = await httpServerFixture(t, "devspace-cached-process-test-");
   await mkdir(join(root, "nested"));
@@ -919,7 +920,7 @@ test("HTTP cached process arguments preserve working directory, yield and output
     name: "exec_command",
     arguments: {
       workspaceId,
-      cmd: "node -e \"setTimeout(()=>console.log('y'.repeat(2000)),1500)\"",
+      cmd: "node -e \"const fs=require('node:fs');const t=setInterval(()=>{if(fs.existsSync('release-cached')){clearInterval(t);console.log('y'.repeat(2000))}},20)\"",
       yieldTimeMs: 0,
     },
   });
@@ -936,16 +937,28 @@ test("HTTP cached process arguments preserve working directory, yield and output
   const invalidBody = await invalidSession.json();
   assert.ok(invalidBody.error || invalidBody.result?.isError, JSON.stringify(invalidBody));
 
-  // A missing alias would use the 5-second default and return a completed command.
+  const write = ProcessSessionManager.prototype.write;
+  let observedYieldTimeMs: number | undefined;
+  t.mock.method(ProcessSessionManager.prototype, "write", function (
+    this: ProcessSessionManager, input: Parameters<typeof write>[0],
+  ) {
+    observedYieldTimeMs = input.yieldTimeMs;
+
+    return write.call(this, input);
+  });
+
   const pending = await postModernMcp(localBaseUrl, accessToken, "tools/call", {
     name: "write_stdin",
     arguments: { workspaceId, sessionId: session.session_id, yieldTimeMs: 50 },
   });
 
   const waiting = (await pending.json()).result.structuredContent;
+  assert.equal(observedYieldTimeMs, 50);
   assert.equal(waiting.running, true);
   assert.equal(waiting.session_id, session.session_id);
   assert.equal(waiting.result, `Process running with session ID ${session.session_id}.`);
+
+  await writeFile(join(root, "release-cached"), "");
 
   const polled = await postModernMcp(localBaseUrl, accessToken, "tools/call", {
     name: "write_stdin",
