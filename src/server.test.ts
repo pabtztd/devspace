@@ -1572,17 +1572,19 @@ async function git(cwd: string, args: string[]): Promise<void> {
   await execFileAsync("git", args, { cwd });
 }
 
-/** Checks the child-process marker before timing out, including after the final delay. */
-async function waitForFile(path: string, timeoutMs = 1_000): Promise<void> {
-  const deadline = Date.now() + timeoutMs;
+/** Keeps legacy retry tolerance; explicit deadlines use elapsed time and include a final check. */
+async function waitForFile(path: string, timeoutMs?: number): Promise<void> {
+  const deadline = timeoutMs === undefined ? undefined : performance.now() + timeoutMs;
 
-  while (true) {
+  for (let attempt = 0; ; attempt += 1) {
     try {
       await access(path);
 
       return;
     } catch {
-      if (Date.now() >= deadline) assert.fail(`Timed out waiting for ${path}`);
+      const expired = deadline === undefined ? attempt >= 100 : performance.now() >= deadline;
+
+      if (expired) assert.fail(`Timed out waiting for ${path}`);
 
       await new Promise((resolve) => setTimeout(resolve, 10));
     }
