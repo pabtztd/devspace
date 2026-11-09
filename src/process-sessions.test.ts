@@ -142,6 +142,41 @@ test("an aborted poll leaves completed output available to the next poll", async
   }), /Unknown process session/);
 });
 
+test("cancelling a pending poll releases its wait without stopping the process", async (t) => {
+  const manager = createManager(t);
+
+  const started = await manager.start({
+    workspaceId: "workspace-a", cwd: process.cwd(),
+    command: `${node} -e "process.stdin.once('data', () => { console.log('still-running'); process.exit(0); })"`,
+    yieldTimeMs: 0,
+  });
+
+  assert.ok(started.sessionId);
+  t.mock.timers.enable({ apis: ["setTimeout"] });
+  const controller = new AbortController();
+  let settled = false;
+
+  const poll = assert.rejects(manager.write({
+    workspaceId: "workspace-a", sessionId: started.sessionId,
+    yieldTimeMs: 10_000, signal: controller.signal,
+  }), { name: "AbortError" }).then(() => { settled = true; });
+
+  controller.abort();
+  // Let cancellation settle without advancing the mocked yield timer.
+  await new Promise<void>((resolve) => setImmediate(resolve));
+  assert.equal(settled, true);
+  await poll;
+  t.mock.timers.reset();
+
+  const completed = await manager.write({
+    workspaceId: "workspace-a", sessionId: started.sessionId,
+    chars: "continue\n", yieldTimeMs: 2_000,
+  });
+
+  assert.equal(completed.exitCode, 0);
+  assert.match(completed.output, /still-running/);
+});
+
 test("an already aborted write does not send input to the process", async (t) => {
   const manager = createManager(t);
 

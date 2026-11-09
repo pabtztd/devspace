@@ -1189,6 +1189,7 @@ test("an aborted HTTP write_stdin preserves its final output for reconnection", 
   // Observe completion of the real manager call before reconnecting, including its error path.
   const write = ProcessSessionManager.prototype.write;
   let finishPoll: () => void = () => {};
+  let pollSettled = false;
   const pollFinished = new Promise<void>((resolve) => { finishPoll = resolve; });
   t.mock.method(ProcessSessionManager.prototype, "write", async function (
     this: ProcessSessionManager, input: Parameters<typeof write>[0],
@@ -1196,6 +1197,7 @@ test("an aborted HTTP write_stdin preserves its final output for reconnection", 
     try {
       return await write.call(this, input);
     } finally {
+      pollSettled = true;
       finishPoll();
     }
   });
@@ -1207,7 +1209,8 @@ test("an aborted HTTP write_stdin preserves its final output for reconnection", 
     arguments: { workspace_id: workspaceId, session_id: sessionId, chars: "go\n", yield_time_ms: 10_000 },
   }, { signal: controller.signal });
 
-  await waitForFile(join(root, "polled"));
+  await waitForFile(join(root, "polled"), 5_000);
+  assert.equal(pollSettled, false, "the poll must still be pending when cancelled");
   controller.abort();
   await assert.rejects(poll, /abort/i);
   await writeFile(join(root, "release"), "");
@@ -1569,8 +1572,10 @@ async function git(cwd: string, args: string[]): Promise<void> {
   await execFileAsync("git", args, { cwd });
 }
 
-async function waitForFile(path: string): Promise<void> {
-  for (let attempt = 0; attempt < 100; attempt += 1) {
+async function waitForFile(path: string, timeoutMs = 1_000): Promise<void> {
+  const deadline = Date.now() + timeoutMs;
+
+  while (Date.now() < deadline) {
     try {
       await access(path);
 

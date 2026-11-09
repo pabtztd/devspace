@@ -368,7 +368,7 @@ export class ProcessSessionManager {
     if ((interactionRequested || !session.buffer.hasOutput()) && session.running) {
       const fallback = interactionRequested ? DEFAULT_INTERACTIVE_YIELD_MS : DEFAULT_POLL_YIELD_MS;
       const yieldTimeMs = boundedInteger(input.yieldTimeMs, fallback, MAX_PROCESS_YIELD_MS);
-      await this.waitForExit(session, yieldTimeMs);
+      await this.waitForExit(session, yieldTimeMs, input.signal);
     }
 
     // A cancelled request must not drain output or discard the completed session.
@@ -396,18 +396,28 @@ export class ProcessSessionManager {
     this.sessions.clear();
   }
 
-  private async waitForExit(session: ProcessSession, yieldTimeMs: number): Promise<void> {
+  private async waitForExit(session: ProcessSession, yieldTimeMs: number, signal?: AbortSignal): Promise<void> {
     let timer: NodeJS.Timeout | undefined;
+    let onAbort: (() => void) | undefined;
 
     try {
       await Promise.race([
         session.exitPromise,
-        new Promise<void>((resolve) => {
+        new Promise<void>((resolve, reject) => {
           timer = setTimeout(resolve, yieldTimeMs);
+
+          if (signal) {
+            onAbort = () => reject(signal.reason);
+            signal.addEventListener("abort", onAbort, { once: true });
+
+            if (signal.aborted) onAbort();
+          }
         }),
       ]);
     } finally {
       if (timer) clearTimeout(timer);
+
+      if (onAbort) signal?.removeEventListener("abort", onAbort);
     }
   }
 
