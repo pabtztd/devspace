@@ -1572,20 +1572,21 @@ async function git(cwd: string, args: string[]): Promise<void> {
   await execFileAsync("git", args, { cwd });
 }
 
+/** Checks the child-process marker before timing out, including after the final delay. */
 async function waitForFile(path: string, timeoutMs = 1_000): Promise<void> {
   const deadline = Date.now() + timeoutMs;
 
-  while (Date.now() < deadline) {
+  while (true) {
     try {
       await access(path);
 
       return;
     } catch {
+      if (Date.now() >= deadline) assert.fail(`Timed out waiting for ${path}`);
+
       await new Promise((resolve) => setTimeout(resolve, 10));
     }
   }
-
-  assert.fail(`Timed out waiting for ${path}`);
 }
 
 async function issueTestAccessToken(
