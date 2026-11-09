@@ -239,8 +239,10 @@ function sendJsonRpcError(
   });
 }
 
-// ChatGPT may retain camelCase arguments from older cached tool schemas.
-// Normalize known aliases at the HTTP edge; public schemas stay canonical.
+/**
+ * Accepts observed cached ChatGPT aliases without changing public schemas.
+ * Checks every pair before mutation so conflicting inputs never reach a tool.
+ */
 function normalizeCachedToolArguments(body: WireInput): boolean {
   if (!body || !isObjectValue(body) || Array.isArray(body)) return true;
   // SAFETY: The surrounding checks or construction already match this type.

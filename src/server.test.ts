@@ -913,12 +913,13 @@ test("HTTP cached process arguments preserve working directory, yield and output
   assert.match(completed.result, /^nested\r?\n/);
   assert.equal(completed.output_truncated, true);
   assert.equal(completed.exit_code, 0);
+  assert.ok(completed.result.length <= 256 + "\nProcess exited with code 0.".length);
 
   const started = await postModernMcp(localBaseUrl, accessToken, "tools/call", {
     name: "exec_command",
     arguments: {
       workspaceId,
-      cmd: "node -e \"setTimeout(()=>console.log('y'.repeat(2000)),250)\"",
+      cmd: "node -e \"setTimeout(()=>console.log('y'.repeat(2000)),1500)\"",
       yieldTimeMs: 0,
     },
   });
@@ -927,11 +928,30 @@ test("HTTP cached process arguments preserve working directory, yield and output
   assert.equal(session.running, true);
   assert.equal(isJsonNumber(session.session_id), true);
 
+  const invalidSession = await postModernMcp(localBaseUrl, accessToken, "tools/call", {
+    name: "write_stdin",
+    arguments: { workspaceId, sessionId: String(session.session_id), yieldTimeMs: 0 },
+  });
+
+  const invalidBody = await invalidSession.json();
+  assert.ok(invalidBody.error || invalidBody.result?.isError, JSON.stringify(invalidBody));
+
+  // A missing alias would use the 5-second default and return a completed command.
+  const pending = await postModernMcp(localBaseUrl, accessToken, "tools/call", {
+    name: "write_stdin",
+    arguments: { workspaceId, sessionId: session.session_id, yieldTimeMs: 50 },
+  });
+
+  const waiting = (await pending.json()).result.structuredContent;
+  assert.equal(waiting.running, true);
+  assert.equal(waiting.session_id, session.session_id);
+  assert.equal(waiting.result, `Process running with session ID ${session.session_id}.`);
+
   const polled = await postModernMcp(localBaseUrl, accessToken, "tools/call", {
     name: "write_stdin",
     arguments: {
       workspaceId, sessionId: session.session_id,
-      yieldTimeMs: 2_000, maxOutputTokens: 10,
+      yieldTimeMs: 4_000, maxOutputTokens: 10,
     },
   });
 
@@ -940,6 +960,7 @@ test("HTTP cached process arguments preserve working directory, yield and output
   assert.equal(result.exit_code, 0);
   assert.equal(result.output_truncated, true);
   assert.match(result.result, /yyyy/);
+  assert.ok(result.result.length <= 256 + "\nProcess exited with code 0.".length);
 });
 
 test("HTTP cached process aliases reject conflicts and invalid types before execution", async (t) => {
